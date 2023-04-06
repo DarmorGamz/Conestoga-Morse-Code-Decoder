@@ -22,6 +22,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdio.h>
+#include "stdbool.h"
+#include <string.h>
 
 /* USER CODE END Includes */
 
@@ -32,6 +35,12 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define DOT_THRESHOLD       1000
+#define DASH_THRESHOLD      3000
+#define GAP_INTRA_LETTER    1000
+#define GAP_LETTER          4000
+#define GAP_WORD            7000
+#define INPUT_FINISH        10000
 
 /* USER CODE END PD */
 
@@ -100,12 +109,60 @@ void Task3_Temp(void *argument);
 void Task4_Temp(void *argument);
 
 /* USER CODE BEGIN PFP */
-
+char morseToCharacter(const char* morse);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+typedef struct {
+    const char* morse;
+    char character;
+} MorseCode;
 
+typedef enum {
+    SIGNAL_NONE,
+    SIGNAL_DOT,
+    SIGNAL_DASH
+} MorseSignal;
+
+static const MorseCode morseLookupTable[] = {
+    { ".-", 'A' },
+    { "-...", 'B' },
+    { "-.-.", 'C' },
+    { "-..", 'D' },
+    { ".", 'E' },
+    { "..-.", 'F' },
+    { "--.", 'G' },
+    { "....", 'H' },
+    { "..", 'I' },
+    { ".---", 'J' },
+    { "-.-", 'K' },
+    { ".-..", 'L' },
+    { "--", 'M' },
+    { "-.", 'N' },
+    { "---", 'O' },
+    { ".--.", 'P' },
+    { "--.-", 'Q' },
+    { ".-.", 'R' },
+    { "...", 'S' },
+    { "-", 'T' },
+    { "..-", 'U' },
+    { "...-", 'V' },
+    { ".--", 'W' },
+    { "-..-", 'X' },
+    { "-.--", 'Y' },
+    { "--..", 'Z' },
+    { "-----", '0' },
+    { ".----", '1' },
+    { "..---", '2' },
+    { "...--", '3' },
+    { "....-", '4' },
+    { ".....", '5' },
+    { "-....", '6' },
+    { "--...", '7' },
+    { "---..", '8' },
+    { "----.", '9' },
+};
 /* USER CODE END 0 */
 
 /**
@@ -136,9 +193,9 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+
   MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -188,7 +245,6 @@ int main(void)
   /* USER CODE END RTOS_THREADS */
 
   /* USER CODE BEGIN RTOS_EVENTS */
-  /* add events, ... */
   /* USER CODE END RTOS_EVENTS */
 
   /* Start scheduler */
@@ -285,6 +341,7 @@ static void MX_USART2_UART_Init(void)
 
 }
 
+
 /**
   * @brief GPIO Initialization Function
   * @param None
@@ -346,7 +403,26 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+int _write(int file, char *data, int len) {
+    if ((file != STDOUT_FILENO) && (file != STDERR_FILENO)) {
+        errno = EBADF;
+        return -1;
+    }
 
+    HAL_StatusTypeDef status = HAL_UART_Transmit(&huart2, (uint8_t *)data, len, HAL_MAX_DELAY);
+
+    // return # of bytes written or error
+    return (status == HAL_OK ? len : EIO);
+}
+
+char morseToCharacter(const char* morse) {
+    for (int i = 0; i < sizeof(morseLookupTable) / sizeof(morseLookupTable[0]); i++) {
+        if (strcmp(morse, morseLookupTable[i].morse) == 0) {
+            return morseLookupTable[i].character;
+        }
+    }
+    return '\0'; // Return null character if not found
+}
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_Task1_Temp */
@@ -356,15 +432,50 @@ static void MX_GPIO_Init(void)
   * @retval None
   */
 /* USER CODE END Header_Task1_Temp */
-void Task1_Temp(void *argument)
-{
-  /* USER CODE BEGIN 5 */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
-  /* USER CODE END 5 */
+void Task1_Temp(void *argument) {
+	uint32_t button_press_time = 0;
+	uint32_t button_release_time = 0;
+	bool button_pressed = false;
+	MorseSignal signal;
+
+	// Init console.
+	fflush(stdout);
+	printf("\033[2K\033[1G"); // Clear line
+	printf("\033[1A"); // Move the cursor up 1 line
+	printf("\033[2K\033[1G"); // Clear line
+	printf("Button Tick: %lu\r\n", 0);
+
+	for (;;) {
+		if(button_pressed) {
+			fflush(stdout);
+			printf("\033[1A"); // Move the cursor up 1 line
+			printf("Button Tick: %lu\r\n", HAL_GetTick()-button_press_time);
+		}
+
+		// Check if the button is pressed
+		if (HAL_GPIO_ReadPin(BUTTON1_GPIO_Port, BUTTON1_Pin) == GPIO_PIN_SET && !button_pressed) {
+			button_pressed = true;
+			button_press_time = HAL_GetTick();
+
+			printf("\033[1A"); // Move the cursor up 1 line
+			printf("\033[2K\033[1G"); // Clear line
+			printf("Button Tick: 0\r\n");
+
+		} else if (HAL_GPIO_ReadPin(BUTTON1_GPIO_Port, BUTTON1_Pin) == GPIO_PIN_RESET && button_pressed) {
+			button_pressed = false;
+			button_release_time = HAL_GetTick();
+
+			uint32_t press_duration = button_release_time - button_press_time;
+			if (press_duration < DOT_THRESHOLD) {
+				signal = SIGNAL_DOT;
+			} else {
+				signal = SIGNAL_DASH;
+			}
+
+			// Enqueue the Morse code signal (dot or dash) to Queue1
+			osMessageQueuePut(Queue1Handle, &signal, 0, 0);
+		}
+	}
 }
 
 /* USER CODE BEGIN Header_Task2_Temp */
@@ -374,15 +485,44 @@ void Task1_Temp(void *argument)
 * @retval None
 */
 /* USER CODE END Header_Task2_Temp */
-void Task2_Temp(void *argument)
-{
-  /* USER CODE BEGIN Task2_Temp */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
-  /* USER CODE END Task2_Temp */
+void Task2_Temp(void *argument) {
+	// Init vars.
+	MorseSignal signal;
+	osStatus_t status;
+	uint32_t led_on_time = 0;
+	bool led_on = false;
+
+	for (;;) {
+		// Dequeue a Morse code signal (dot or dash) from Queue1
+		status = osMessageQueueGet(Queue1Handle, &signal, NULL, 0);
+		if (status == osOK) { // Dash or Dot in Queue.
+			// Turn on the LED
+			HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_SET);
+			led_on = true;
+			led_on_time = HAL_GetTick();
+
+			// Enqueue the signal to Queue2_1 and Queue2_2
+			osMessageQueuePut(Queue2_1Handle, &signal, 0, 0);
+			osMessageQueuePut(Queue2_2Handle, &signal, 0, 0);
+
+		} else { // Dash or Dot in Queue.
+			if(led_on) {
+				if (signal == SIGNAL_DOT) {
+					if(led_on_time+DOT_THRESHOLD <= HAL_GetTick()) {
+						// Turn off the LED
+						HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
+						led_on = false;
+					}
+				} else if (signal == SIGNAL_DASH) {
+					if(led_on_time+DASH_THRESHOLD <= HAL_GetTick()) {
+						// Turn off the LED
+						HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
+						led_on = false;
+					}
+				}
+			}
+		}
+	}
 }
 
 /* USER CODE BEGIN Header_Task3_Temp */
@@ -392,15 +532,62 @@ void Task2_Temp(void *argument)
 * @retval None
 */
 /* USER CODE END Header_Task3_Temp */
-void Task3_Temp(void *argument)
-{
-  /* USER CODE BEGIN Task3_Temp */
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
-  /* USER CODE END Task3_Temp */
+void Task3_Temp(void *argument) {
+	MorseSignal signal;
+	osStatus_t status;
+
+	// Buffer to store the Morse code sequence
+	char morse_buffer[8] = {0};
+	uint8_t buffer_index = 0;
+	uint32_t last_signal_time = 0;
+	bool word_space = false;
+
+	static int letter_count = 1;
+
+	for (;;) {
+		// Dequeue a Morse code signal (dot or dash) from Queue2_1
+		status = osMessageQueueGet(Queue2_1Handle, &signal, NULL, 0);
+		if (status == osOK) { // Got Dash or Dot
+			last_signal_time = HAL_GetTick();
+			word_space = false;
+
+			// Add the signal to the buffer
+			if (signal == SIGNAL_DOT) {
+				morse_buffer[buffer_index++] = '.';
+			} else if (signal == SIGNAL_DASH) {
+				morse_buffer[buffer_index++] = '-';
+			}
+
+		} else { // Did not get Dash or Dot.
+			uint32_t current_time = HAL_GetTick();
+			if (current_time - last_signal_time >= GAP_WORD && last_signal_time != 0) {
+				// Handle word space
+				if(word_space == false) {
+					printf("\033[%dG", letter_count);
+					printf(" ");
+					fflush(stdout);
+					word_space = true;
+					letter_count++;
+				}
+			} else if (current_time - last_signal_time >= GAP_LETTER && last_signal_time != 0) {
+				// Make sure the buffer is null-terminated
+				morse_buffer[buffer_index] = '\0';
+
+				// Decode the Morse code and print the corresponding letter
+				for (int i = 0; morseLookupTable[i].morse != NULL; ++i) {
+					if (strcmp(morse_buffer, morseLookupTable[i].morse) == 0) {
+						printf("\033[%dG", letter_count);
+						printf("%c", morseLookupTable[i].character);
+						letter_count++;
+						fflush(stdout);
+						break;
+					}
+				}
+				buffer_index = 0;
+				memset(morse_buffer, 0, sizeof(morse_buffer));
+			}
+		}
+	}
 }
 
 /* USER CODE BEGIN Header_Task4_Temp */
