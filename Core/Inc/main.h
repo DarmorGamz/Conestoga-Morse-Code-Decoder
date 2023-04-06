@@ -28,9 +28,6 @@ extern "C" {
 
 /* Includes ------------------------------------------------------------------*/
 #include "stm32f4xx_hal.h"
-#include <stdio.h>
-#include <errno.h>
-#include <sys/unistd.h> // STDOUT_FILENO, STDERR_FILENO
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
