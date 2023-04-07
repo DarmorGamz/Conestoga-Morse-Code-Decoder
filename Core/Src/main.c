@@ -23,7 +23,7 @@ SN: 8258832
 #define DOT_THRESHOLD       1000
 #define DASH_THRESHOLD      3000
 #define GAP_INTRA_LETTER    1000
-#define GAP_LETTER          4000
+#define GAP_LETTER          3000
 #define GAP_WORD            7000
 #define INPUT_FINISH        10000
 
@@ -90,7 +90,6 @@ void Task1_Temp(void *argument);
 void Task2_Temp(void *argument);
 void Task3_Temp(void *argument);
 void Task4_Temp(void *argument);
-char morseToCharacter(const char* morse);
 
 /* Private user code ---------------------------------------------------------*/
 typedef struct {
@@ -102,7 +101,8 @@ typedef enum {
     SIGNAL_NONE,
     SIGNAL_DOT,
     SIGNAL_DASH,
-	SIGNAL_SPACE
+	SIGNAL_SPACE,
+	SIGNAL_END
 } MorseSignal;
 
 static const MorseCode morseLookupTable[] = {
@@ -289,18 +289,15 @@ int _write(int file, char *data, int len) {
     return (status == HAL_OK ? len : EIO);
 }
 
-char morseToCharacter(const char* morse) {
-    for(int i = 0; i < sizeof(morseLookupTable) / sizeof(morseLookupTable[0]); i++) {
-        if (strcmp(morse, morseLookupTable[i].morse) == 0) { return morseLookupTable[i].character; }
-    }
-    return '\0'; // Return null character if not found
-}
-
 void Task1_Temp(void *argument) {
 	// Init vars.
 	uint32_t button_press_time = 0; // Rising edge.
 	uint32_t button_release_time = 0; // Falling edge.
 	bool button_pressed = false; // Used to prevent calculation if there was no rising edge.
+
+	bool sent_space = false;
+	bool sent_gap = false;
+	bool sent_end = false;
 	MorseSignal signal;
 
 	// Init console.
@@ -313,20 +310,60 @@ void Task1_Temp(void *argument) {
 			button_pressed = true;
 			button_press_time = HAL_GetTick();
 
+			sent_space = false;
+			sent_gap = false;
+			sent_end = false;
+
 		} else if (HAL_GPIO_ReadPin(BUTTON1_GPIO_Port, BUTTON1_Pin) == GPIO_PIN_RESET && button_pressed) {
+			// Reset falling edge detect.
 			button_pressed = false;
+
+			// Get release time.
 			button_release_time = HAL_GetTick();
 
+			// Calculate press duration.
 			uint32_t press_duration = button_release_time - button_press_time;
-			if (press_duration < DOT_THRESHOLD) {
-				signal = SIGNAL_DOT;
-			} else {
-				signal = SIGNAL_DASH;
-			}
+
+			// Determine signal (dash or dot).
+			if (press_duration < DOT_THRESHOLD) { signal = SIGNAL_DOT; }
+			else { signal = SIGNAL_DASH; }
 
 			// Enqueue the Morse code signal (dot or dash) to Queue1
 			osMessageQueuePut(Queue1Handle, &signal, 0, 0);
+
+		} else {
+			if(button_press_time == 0 || button_pressed) { osDelay(100); continue; } // First button press of the signal.
+
+			// Get current tick.
+			uint32_t current_time = HAL_GetTick(); // Prevents multiple calls of HAL_GetTick();
+
+			if(button_release_time+GAP_LETTER < current_time && !sent_gap) {
+				// Set the signal.
+				signal = SIGNAL_NONE;
+				// Prevent multiple spaces from being sent.
+				sent_gap = true;
+				// Enqueue the Morse code signal (space, end, or none) to Queue1
+				osMessageQueuePut(Queue1Handle, &signal, 0, 0);
+
+			} else if(button_release_time+GAP_WORD < HAL_GetTick() && !sent_space) {
+				// Set the signal.
+				signal = SIGNAL_SPACE;
+				// Prevent multiple spaces from being sent.
+				sent_space = true;
+				// Enqueue the Morse code signal (space, end, or none) to Queue1
+				osMessageQueuePut(Queue1Handle, &signal, 0, 0);
+
+			} else if(button_release_time+INPUT_FINISH < HAL_GetTick() && !sent_end) {
+				// Set the signal.
+				signal = SIGNAL_END;
+				// Prevent multiple spaces from being sent.
+				sent_end = true;
+				// Enqueue the Morse code signal (space, end, or none) to Queue1
+				osMessageQueuePut(Queue1Handle, &signal, 0, 0);
+			}
 		}
+
+		// Prevent CPU deadlock.
 		osDelay(100);
 	}
 }
@@ -341,34 +378,38 @@ void Task2_Temp(void *argument) {
 	for (;;) {
 		// Dequeue a Morse code signal (dot or dash) from Queue1
 		status = osMessageQueueGet(Queue1Handle, &signal, NULL, 0);
-		if (status == osOK) { // Dash or Dot in Queue.
+		if (status == osOK) {
+			// Enqueue the signal to Queue2_1 and Queue2_2
+			osMessageQueuePut(Queue2_1Handle, &signal, 0, 0);
+			osMessageQueuePut(Queue2_2Handle, &signal, 0, 0);
+
+			// Sender Indicator light ignores spaces and letter gaps.
+			if(signal == SIGNAL_SPACE || signal == SIGNAL_NONE || signal == SIGNAL_END) {
+				HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
+				led_on = false;
+				continue;
+			}
+
 			// Turn on the LED
 			HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_SET);
 			led_on = true;
 			led_on_time = HAL_GetTick();
 
-			// Enqueue the signal to Queue2_1 and Queue2_2
-			osMessageQueuePut(Queue2_1Handle, &signal, 0, 0);
-			osMessageQueuePut(Queue2_2Handle, &signal, 0, 0);
-
 		} else { // Dash or Dot in Queue.
-			if(led_on) {
-				if (signal == SIGNAL_DOT) {
-					if(led_on_time+DOT_THRESHOLD <= HAL_GetTick()) {
-						// Turn off the LED
-						HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
-						led_on = false;
-					}
-				} else if (signal == SIGNAL_DASH) {
-					if(led_on_time+DASH_THRESHOLD <= HAL_GetTick()) {
-						// Turn off the LED
-						HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
-						led_on = false;
-					}
+			if (signal == SIGNAL_DOT && led_on) {
+				if(led_on_time+DOT_THRESHOLD <= HAL_GetTick()) {
+					// Turn off the LED
+					HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
+					led_on = false;
+				}
+			} else if (signal == SIGNAL_DASH && led_on) {
+				if(led_on_time+DASH_THRESHOLD <= HAL_GetTick()) {
+					// Turn off the LED
+					HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, GPIO_PIN_RESET);
+					led_on = false;
 				}
 			}
 		}
-		osDelay(100);
 	}
 }
 
@@ -380,42 +421,22 @@ void Task3_Temp(void *argument) {
 	// Buffer to store the Morse code sequence
 	char morse_buffer[8] = {0};
 	uint8_t buffer_index = 0;
-	uint32_t last_signal_time = 0;
-
-	// Used to prevent duplication/infinite spaces and end sends.
-	bool word_space = false;
-	bool reciever_send = false;
 
 	for (;;) {
 		// Dequeue a Morse code signal (dot or dash) from Queue2_1
 		status = osMessageQueueGet(Queue2_1Handle, &signal, NULL, 0);
 		if (status == osOK) { // Got Dash or Dot
-			last_signal_time = HAL_GetTick();
-			word_space = false;
-			reciever_send = false;
-
 			// Add the signal to the buffer
 			if (signal == SIGNAL_DOT) {
 				morse_buffer[buffer_index++] = '.';
 			} else if (signal == SIGNAL_DASH) {
 				morse_buffer[buffer_index++] = '-';
-			}
-
-		} else { // Did not get Dash or Dot.
-			uint32_t current_time = HAL_GetTick();
-			if(current_time - last_signal_time >= INPUT_FINISH && last_signal_time != 0) {
-				if(reciever_send == false){
-					osSemaphoreRelease(IndicateToRecieverHandle); // Second set of lights can start again.
-					reciever_send = true;
-				}
-			} else if (current_time - last_signal_time >= GAP_WORD && last_signal_time != 0) {
-				// Handle word space
-				if(word_space == false) {
-					word_space = true;
-					printf(" ");
-					fflush(stdout);
-				}
-			} else if (current_time - last_signal_time >= GAP_LETTER && last_signal_time != 0) {
+			} else if (signal == SIGNAL_END) {
+				osSemaphoreRelease(IndicateToRecieverHandle);
+			} else if (signal == SIGNAL_SPACE) {
+				printf(" ");
+				fflush(stdout);
+			} else if (signal == SIGNAL_NONE) {
 				// Make sure the buffer is null-terminated
 				morse_buffer[buffer_index] = '\0';
 
@@ -430,8 +451,8 @@ void Task3_Temp(void *argument) {
 				buffer_index = 0;
 				memset(morse_buffer, 0, sizeof(morse_buffer));
 			}
-		}
-		osDelay(100);
+
+		} else { }
 	}
 }
 
@@ -444,22 +465,34 @@ void Task4_Temp(void *argument) {
 		osSemaphoreAcquire(IndicateToRecieverHandle, portMAX_DELAY); // Take semaphore when available, this
 		// Dequeue a Morse code signal (dot or dash) from Queue2_1
 		if((status = osMessageQueueGet(Queue2_2Handle, &signal, NULL, 0)) == osOK) {
-			// Turn on the LED
-			HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_SET);
-
-			// Wait for the corresponding duration (dot or dash)
+			printf("TASK4: %d\r\n", signal);
 			if (signal == SIGNAL_DOT) {
+				// Turn on the LED
+				HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_SET);
+				// Wait for Dot duration.
 				HAL_Delay(DOT_THRESHOLD);
+				// Turn off the LED
+				HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_RESET);
+				// Pause briefly so LED isn't on forever.
+				HAL_Delay(GAP_INTRA_LETTER);
+
 			} else if (signal == SIGNAL_DASH) {
+				// Turn on the LED
+				HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_SET);
+				// Wait for Dot duration.
 				HAL_Delay(DASH_THRESHOLD);
+				// Turn off the LED
+				HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_RESET);
+				// Pause briefly so LED isn't on forever.
+				HAL_Delay(GAP_INTRA_LETTER);
+
 			}
+			else if (signal == SIGNAL_NONE) { HAL_Delay(GAP_LETTER); }
+			else if (signal == SIGNAL_SPACE) { HAL_Delay(GAP_WORD); }
 
-			// Turn off the LED
-			HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, GPIO_PIN_RESET);
+			// Continue iterating over the queue.
+			if (signal != SIGNAL_END) { osSemaphoreRelease(IndicateToRecieverHandle); }
 
-			HAL_Delay(GAP_INTRA_LETTER);
-
-			osSemaphoreRelease(IndicateToRecieverHandle);
 		} else { }
 	}
 }
