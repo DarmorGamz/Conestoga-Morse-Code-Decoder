@@ -61,8 +61,8 @@
 
 <!-- ABOUT THE PROJECT -->
 ## About The Project
-
-[![Product Name Screen Shot][product-screenshot]](https://example.com)
+<img src='images/DevBoard.png' width='250'>
+<img src='images/screenshot.png' width='250'>
 
 
 
@@ -146,7 +146,7 @@ Project Link: [https://github.com/DarmorGamz/Morse-Code-Decoder](https://github.
 [license-url]: https://github.com/DarmorGamz/Morse-Code-Decoder/blob/master/LICENSE.txt
 [linkedin-shield]: https://img.shields.io/badge/-LinkedIn-black.svg?style=for-the-badge&logo=linkedin&colorB=555
 [linkedin-url]: https://linkedin.com/in/darren--morrison
-[product-screenshot]: images/screenshot.png
+[product-screenshot]: images/screenshot.png 
 
 [C.com]: https://img.shields.io/badge/c-%2300599C.svg?style=for-the-badge&logo=c&logoColor=white
 [C-url]: https://www.cprogramming.com
